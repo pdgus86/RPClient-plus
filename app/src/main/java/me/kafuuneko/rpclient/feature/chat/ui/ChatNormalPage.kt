@@ -54,6 +54,23 @@ import androidx.compose.material.icons.rounded.KeyboardArrowUp
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material.icons.rounded.Tune
+import androidx.compose.material.icons.automirrored.rounded.VolumeUp
+import androidx.compose.material.icons.automirrored.rounded.VolumeOff
+import androidx.compose.material.icons.rounded.Mic
+import androidx.compose.material.icons.rounded.RecordVoiceOver
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.ui.platform.LocalContext
+import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
+import me.kafuuneko.rpclient.feature.voicesettings.VoiceSettingsActivity
+import me.kafuuneko.rpclient.libs.voice.SpeechInput
+import me.kafuuneko.rpclient.libs.voice.VoiceManager
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -513,6 +530,18 @@ private fun CustomChatTopBar(
                     modifier = Modifier.size(20.dp),
                     tint = if (sessionLoreDialogVisible) MaterialTheme.colorScheme.primary
                     else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f),
+                )
+            }
+            val voiceContext = LocalContext.current
+            IconButton(
+                onClick = { voiceContext.startActivity(Intent(voiceContext, VoiceSettingsActivity::class.java)) },
+                modifier = Modifier.size(36.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.RecordVoiceOver,
+                    contentDescription = "Voice settings",
+                    modifier = Modifier.size(20.dp),
+                    tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f),
                 )
             }
             IconButton(
@@ -1026,6 +1055,22 @@ private fun MessageActions(
     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         val iconColor = MaterialTheme.colorScheme.onSurfaceVariant
 
+        if (message.role == MessageRole.Assistant) {
+            val speaking by VoiceManager.speaking.collectAsState()
+            IconButton(
+                onClick = {
+                    if (speaking) VoiceManager.stop() else VoiceManager.speakNow(message.content)
+                },
+                modifier = Modifier.size(30.dp),
+            ) {
+                Icon(
+                    imageVector = if (speaking) Icons.AutoMirrored.Rounded.VolumeOff else Icons.AutoMirrored.Rounded.VolumeUp,
+                    contentDescription = if (speaking) "Stop speaking" else "Read aloud",
+                    modifier = Modifier.size(17.dp),
+                    tint = iconColor,
+                )
+            }
+        }
         IconButton(
             onClick = { ChatUiIntent.CopyMessage(message.id).emit() },
             modifier = Modifier.size(30.dp),
@@ -1097,6 +1142,57 @@ private fun ChatInputBar(
     emit: ChatUiIntent.() -> Unit,
 ) {
     val hapticFeedback = LocalHapticFeedback.current
+    val micContext = LocalContext.current
+    var listening by remember { mutableStateOf(false) }
+    val currentDraft by rememberUpdatedState(draft)
+    val currentEmit by rememberUpdatedState(emit)
+    var micBase by remember { mutableStateOf("") }
+    val speechInput = remember {
+        SpeechInput(
+            context = micContext,
+            onPartial = { text -> currentEmit(ChatUiIntent.ChangeInputDraft(joinDraft(micBase, text))) },
+            onFinal = { text ->
+                if (text.isNotBlank()) {
+                    currentEmit(ChatUiIntent.ChangeInputDraft(joinDraft(micBase, text)))
+                    if (VoiceManager.autoSend) currentEmit(ChatUiIntent.SendMessage)
+                }
+            },
+            onEnd = { listening = false },
+            onError = { code ->
+                if (code != android.speech.SpeechRecognizer.ERROR_NO_MATCH &&
+                    code != android.speech.SpeechRecognizer.ERROR_SPEECH_TIMEOUT &&
+                    code != android.speech.SpeechRecognizer.ERROR_CLIENT
+                ) {
+                    Toast.makeText(micContext, "Mic error ($code)", Toast.LENGTH_SHORT).show()
+                }
+            },
+        )
+    }
+    DisposableEffect(Unit) { onDispose { speechInput.destroy() } }
+    val startMic = {
+        if (!speechInput.available) {
+            Toast.makeText(micContext, "No speech recognition service on this phone", Toast.LENGTH_LONG).show()
+        } else {
+            micBase = currentDraft
+            listening = true
+            speechInput.start()
+        }
+    }
+    val micPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) startMic()
+        else Toast.makeText(micContext, "Microphone permission is needed for voice input", Toast.LENGTH_LONG).show()
+    }
+    val onMicClick = {
+        if (listening) {
+            speechInput.stop()
+        } else if (ContextCompat.checkSelfPermission(micContext, Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            startMic()
+        } else {
+            micPermission.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
     val sendButtonColor by animateColorAsState(
         targetValue = if (isGenerating) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
         label = "sendButtonColor",
@@ -1195,6 +1291,22 @@ private fun ChatInputBar(
                                 } else {
                                     MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
                                 },
+                            )
+                        }
+                    },
+                    trailingIcon = {
+                        IconButton(
+                            onClick = {
+                                hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                onMicClick()
+                            },
+                            enabled = !isGenerating && !imageState.submitting,
+                        ) {
+                            Icon(
+                                imageVector = if (listening) Icons.Rounded.Stop else Icons.Rounded.Mic,
+                                contentDescription = if (listening) "Stop listening" else "Speak",
+                                tint = if (listening) MaterialTheme.colorScheme.error
+                                else MaterialTheme.colorScheme.primary,
                             )
                         }
                     },
@@ -1408,3 +1520,6 @@ private fun PreviewImageMessages(examples: List<Pair<Int, Boolean>>) {
         }
     }
 }
+
+private fun joinDraft(base: String, spoken: String): String =
+    if (base.isBlank()) spoken else base.trimEnd() + " " + spoken

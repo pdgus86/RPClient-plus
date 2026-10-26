@@ -82,6 +82,7 @@ import java.util.concurrent.TimeUnit
 class RPClientApp : Application() {
     override fun onCreate() {
         super.onCreate()
+        me.kafuuneko.rpclient.libs.voice.VoiceManager.init(this)
         Kotpref.init(this)
         val koinApplication = startKoin {
             androidContext(this@RPClientApp)

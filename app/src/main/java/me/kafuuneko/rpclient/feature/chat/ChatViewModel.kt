@@ -98,6 +98,7 @@ import me.kafuuneko.rpclient.libs.room.repository.ChatSummaryGenerationContext
 import me.kafuuneko.rpclient.libs.room.repository.FileRepository
 import me.kafuuneko.rpclient.libs.room.repository.LLMRepository
 import me.kafuuneko.rpclient.libs.room.repository.LorebookRepository
+import me.kafuuneko.rpclient.libs.voice.VoiceManager
 import me.kafuuneko.rpclient.utils.MessageEditPolicy
 import me.kafuuneko.rpclient.utils.formatTimestamp
 import me.kafuuneko.rpclient.utils.toDefaultChatTitle
@@ -1829,6 +1830,7 @@ class ChatViewModel : CoreViewModelWithEvent<ChatUiIntent, ChatUiState>(
             refreshUiState(sessionId = sessionId, generationState = ChatGenerationState.Idle)
             return
         }
+        if (output.source() == ChatMessage.Source.Char) VoiceManager.replyComplete(processedContent)
         // 原子提交生成结果至数据库（并更新世界书时序状态）
         withContext(Dispatchers.IO) {
             mChatRepository.commitGenerationResult(
@@ -1903,6 +1905,8 @@ class ChatViewModel : CoreViewModelWithEvent<ChatUiIntent, ChatUiState>(
             worldInfoStateJson = worldInfoStateJson,
         )
         mActiveStreamingGeneration = active
+        val speakThis = output.source() == ChatMessage.Source.Char
+        if (speakThis) VoiceManager.streamStart(token)
         try {
             // 若为创建新消息，在数据库创建占位记录（支持取消时无痕删除）
             if (output is GenerationOutput.Create) {
@@ -1931,6 +1935,7 @@ class ChatViewModel : CoreViewModelWithEvent<ChatUiIntent, ChatUiState>(
                     is LLMStreamEvent.Delta -> {
                         active = active.copy(content = active.content + event.content)
                         mActiveStreamingGeneration = active
+                        if (speakThis) VoiceManager.streamUpdate(token, active.content)
                         // 计算用于 UI 实时展示的正则替换文本（Display 阶段正则）
                         val displayContent = applyStreamingDisplayRegex(active)
                         val uiState = getOrNull<ChatUiState.Normal>() ?: return@collect
@@ -1957,6 +1962,7 @@ class ChatViewModel : CoreViewModelWithEvent<ChatUiIntent, ChatUiState>(
         } finally {
             // 收尾阶段：在 NonCancellable 上下文下执行唯一一次持久化提交，确保部分生成内容安全落库
             val snapshot = active
+            if (speakThis) VoiceManager.streamEnd(token, snapshot.content)
             try {
                 withContext(NonCancellable + Dispatchers.IO) {
                     val finalContent = snapshot.content.takeIf { text -> text.isNotBlank() }
