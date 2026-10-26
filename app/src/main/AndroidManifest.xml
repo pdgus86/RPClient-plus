@@ -2,9 +2,16 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
     <!-- 允许选择菜单发现翻译、朗读等第三方文本处理入口。 -->
     <queries>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT" />
             <data android:mimeType="text/plain" />
@@ -23,6 +30,9 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.RPClient"
         android:usesCleartextTraffic="true">
+        <activity
+            android:name=".feature.voicesettings.VoiceSettingsActivity"
+            android:exported="false" />
         <activity
             android:name=".feature.contentsearch.ContentSearchActivity"
             android:exported="false"
