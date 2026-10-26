@@ -1,6 +1,14 @@
 package me.kafuuneko.rpclient.feature.storyeditor.ui
 
 import android.os.SystemClock
+import android.content.Intent
+import androidx.compose.material.icons.automirrored.rounded.VolumeOff
+import androidx.compose.material.icons.automirrored.rounded.VolumeUp
+import androidx.compose.material.icons.rounded.RecordVoiceOver
+import androidx.compose.runtime.collectAsState
+import androidx.compose.ui.platform.LocalContext
+import me.kafuuneko.rpclient.feature.voicesettings.VoiceSettingsActivity
+import me.kafuuneko.rpclient.libs.voice.VoiceManager
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -191,7 +199,7 @@ private fun StoryEditorScaffold(
         topBar = {
             // 手机横屏模式由左侧导航轨承载，Scaffold 顶栏隐藏以释放纵向空间
             if (layoutMode != StoryEditorLayoutMode.CompactWide) {
-                StoryEditorTopBar(state, emit)
+                StoryEditorTopBar(state, emit, narrationText = { editorState.text.toString() })
             }
         },
         bottomBar = {
@@ -251,6 +259,7 @@ private fun StoryEditorScaffold(
 private fun StoryEditorTopBar(
     state: StoryEditorUiState.Normal,
     emit: StoryEditorUiIntent.() -> Unit,
+    narrationText: () -> String = { "" },
 ) {
     AppTopBar(
         title = state.topBarState.title,
@@ -260,6 +269,21 @@ private fun StoryEditorTopBar(
         actions = {
             // 保存状态常驻顶栏，窗口紧凑时仍能看到草稿是否安全落库。
             SaveStatus(state.topBarState.saveState, emit)
+            val speaking by VoiceManager.speaking.collectAsState()
+            IconButton(
+                onClick = { if (speaking) VoiceManager.stop() else VoiceManager.speakNow(narrationText()) },
+            ) {
+                Icon(
+                    imageVector = if (speaking) Icons.AutoMirrored.Rounded.VolumeOff else Icons.AutoMirrored.Rounded.VolumeUp,
+                    contentDescription = if (speaking) "Stop narration" else "Narrate chapter",
+                )
+            }
+            val voiceContext = LocalContext.current
+            IconButton(
+                onClick = { voiceContext.startActivity(Intent(voiceContext, VoiceSettingsActivity::class.java)) },
+            ) {
+                Icon(imageVector = Icons.Rounded.RecordVoiceOver, contentDescription = "Voice settings")
+            }
             IconButton(
                 onClick = { StoryEditorUiIntent.OpenPromptInspector.emit() },
                 enabled = state.hasPromptInspection,

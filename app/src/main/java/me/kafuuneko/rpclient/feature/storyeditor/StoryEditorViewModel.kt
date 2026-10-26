@@ -72,6 +72,7 @@ import me.kafuuneko.rpclient.libs.llm.LLMProviderSelectionResolver
 import me.kafuuneko.rpclient.libs.llm.classifyGenerationFailure
 import me.kafuuneko.rpclient.libs.llm.model.LLMGenerationRequest
 import me.kafuuneko.rpclient.libs.llm.model.LLMStreamEvent
+import me.kafuuneko.rpclient.libs.voice.VoiceManager
 import me.kafuuneko.rpclient.libs.llm.model.isOutputTokenLimitReached
 import me.kafuuneko.rpclient.libs.prompt.model.PromptInspection
 import me.kafuuneko.rpclient.libs.prompt.resolveCharacterUserMacros
@@ -1868,6 +1869,8 @@ class StoryEditorViewModel : CoreViewModelWithEvent<StoryEditorUiIntent, StoryEd
     ) {
         var active = initial
         var applyingResult = false
+        val narrate = AppModel.streamEnabled
+        if (narrate) VoiceManager.streamStart(initial.token)
         try {
             // 分发流式与非流式调用
             if (AppModel.streamEnabled) {
@@ -1898,6 +1901,7 @@ class StoryEditorViewModel : CoreViewModelWithEvent<StoryEditorUiIntent, StoryEd
                             active = active.appendGeneratedText(event.content)
                             mActiveGeneration = active
                             updateStreamingPreview(active)
+                            if (narrate) VoiceManager.streamUpdate(initial.token, active.partialText)
                         }
 
                         is LLMStreamEvent.Finished -> Unit
@@ -1912,6 +1916,7 @@ class StoryEditorViewModel : CoreViewModelWithEvent<StoryEditorUiIntent, StoryEd
                 active = active.appendGeneratedText(response.content)
                 mActiveGeneration = active
                 updateStreamingPreview(active)
+                VoiceManager.replyComplete(response.content)
             }
             // 标记进入结果落库应用阶段
             applyingResult = true
@@ -1940,6 +1945,7 @@ class StoryEditorViewModel : CoreViewModelWithEvent<StoryEditorUiIntent, StoryEd
                 dialogState = guideDialog ?: StoryEditorDialogState.None,
             )
         } finally {
+            if (narrate) VoiceManager.streamEnd(initial.token, active.partialText)
             if (mActiveGeneration?.token === initial.token) mActiveGeneration = null
         }
     }
