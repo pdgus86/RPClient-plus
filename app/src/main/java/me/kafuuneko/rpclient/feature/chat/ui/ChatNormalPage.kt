@@ -1174,8 +1174,12 @@ private fun ChatInputBar(
             Toast.makeText(micContext, "No speech recognition service on this phone", Toast.LENGTH_LONG).show()
         } else {
             micBase = currentDraft
-            listening = true
-            speechInput.start()
+            // 识别器启动失败时不进入监听状态，直接提示用户，避免页面崩溃。
+            if (speechInput.start()) {
+                listening = true
+            } else {
+                Toast.makeText(micContext, "Mic failed to start", Toast.LENGTH_LONG).show()
+            }
         }
     }
     val micPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
