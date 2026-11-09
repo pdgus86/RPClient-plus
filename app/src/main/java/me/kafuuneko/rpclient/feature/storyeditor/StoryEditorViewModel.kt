@@ -1901,7 +1901,10 @@ class StoryEditorViewModel : CoreViewModelWithEvent<StoryEditorUiIntent, StoryEd
                             active = active.appendGeneratedText(event.content)
                             mActiveGeneration = active
                             updateStreamingPreview(active)
-                            if (narrate) VoiceManager.streamUpdate(initial.token, active.partialText)
+                            if (narrate) VoiceManager.streamUpdate(
+                                initial.token,
+                                active.partialText
+                            )
                         }
 
                         is LLMStreamEvent.Finished -> Unit

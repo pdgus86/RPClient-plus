@@ -271,7 +271,11 @@ private fun StoryEditorTopBar(
             SaveStatus(state.topBarState.saveState, emit)
             val speaking by VoiceManager.speaking.collectAsState()
             IconButton(
-                onClick = { if (speaking) VoiceManager.stop() else VoiceManager.speakNow(narrationText()) },
+                onClick = {
+                    if (speaking) VoiceManager.stop() else VoiceManager.speakNow(
+                        narrationText()
+                    )
+                },
             ) {
                 Icon(
                     imageVector = if (speaking) Icons.AutoMirrored.Rounded.VolumeOff else Icons.AutoMirrored.Rounded.VolumeUp,
@@ -280,9 +284,19 @@ private fun StoryEditorTopBar(
             }
             val voiceContext = LocalContext.current
             IconButton(
-                onClick = { voiceContext.startActivity(Intent(voiceContext, VoiceSettingsActivity::class.java)) },
+                onClick = {
+                    voiceContext.startActivity(
+                        Intent(
+                            voiceContext,
+                            VoiceSettingsActivity::class.java
+                        )
+                    )
+                },
             ) {
-                Icon(imageVector = Icons.Rounded.RecordVoiceOver, contentDescription = "Voice settings")
+                Icon(
+                    imageVector = Icons.Rounded.RecordVoiceOver,
+                    contentDescription = "Voice settings"
+                )
             }
             IconButton(
                 onClick = { StoryEditorUiIntent.OpenPromptInspector.emit() },
