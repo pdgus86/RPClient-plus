@@ -66,9 +66,20 @@ private fun VoiceSettingsScreen(onBack: () -> Unit, openSystemTts: () -> Unit) {
     var pitch by remember { mutableFloatStateOf(VoiceManager.getFloat(VoiceManager.KEY_PITCH, 1f)) }
     var autoRead by remember { mutableStateOf(VoiceManager.autoRead) }
     var autoSend by remember { mutableStateOf(VoiceManager.autoSend) }
-    var skipActions by remember { mutableStateOf(VoiceManager.getBool(VoiceManager.KEY_SKIP_ACTIONS, false)) }
+    var skipActions by remember {
+        mutableStateOf(
+            VoiceManager.getBool(
+                VoiceManager.KEY_SKIP_ACTIONS,
+                false
+            )
+        )
+    }
     var testText by remember { mutableStateOf("Hi Paul. This is how I sound with these settings.") }
-    LaunchedEffect(ready) { if (ready) { engine = VoiceManager.currentEngine(); refresh++ } }
+    LaunchedEffect(ready) {
+        if (ready) {
+            engine = VoiceManager.currentEngine(); refresh++
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -88,7 +99,8 @@ private fun VoiceSettingsScreen(onBack: () -> Unit, openSystemTts: () -> Unit) {
         val engines = remember(ready, refresh) { VoiceManager.engines() }
         Picker(
             label = "Speech engine",
-            current = engines.firstOrNull { it.name == engine }?.label ?: engine ?: "System default",
+            current = engines.firstOrNull { it.name == engine }?.label ?: engine
+            ?: "System default",
             options = engines.map { it.label to it.name },
             onPick = { name ->
                 engine = name; voice = null
@@ -112,13 +124,16 @@ private fun VoiceSettingsScreen(onBack: () -> Unit, openSystemTts: () -> Unit) {
         if (!ready) Text("Loading engine…", style = MaterialTheme.typography.bodySmall)
 
         Text("Speed: ${"%.2f".format(rate)}x")
-        Slider(value = rate, onValueChange = { rate = it }, valueRange = 0.5f..2.5f,
+        Slider(
+            value = rate, onValueChange = { rate = it }, valueRange = 0.5f..2.5f,
             onValueChangeFinished = { VoiceManager.putFloat(VoiceManager.KEY_RATE, rate) })
         Text("Pitch: ${"%.2f".format(pitch)}")
-        Slider(value = pitch, onValueChange = { pitch = it }, valueRange = 0.5f..2.0f,
+        Slider(
+            value = pitch, onValueChange = { pitch = it }, valueRange = 0.5f..2.0f,
             onValueChangeFinished = { VoiceManager.putFloat(VoiceManager.KEY_PITCH, pitch) })
 
-        OutlinedTextField(value = testText, onValueChange = { testText = it },
+        OutlinedTextField(
+            value = testText, onValueChange = { testText = it },
             modifier = Modifier.fillMaxWidth(), label = { Text("Test sentence") })
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = {
@@ -132,7 +147,11 @@ private fun VoiceSettingsScreen(onBack: () -> Unit, openSystemTts: () -> Unit) {
         Toggle("Read new replies aloud", "Speaks each sentence as the reply comes in.", autoRead) {
             autoRead = it; VoiceManager.putBool(VoiceManager.KEY_AUTO_READ, it)
         }
-        Toggle("Send when I stop talking", "After the mic hears a pause, the message sends by itself.", autoSend) {
+        Toggle(
+            "Send when I stop talking",
+            "After the mic hears a pause, the message sends by itself.",
+            autoSend
+        ) {
             autoSend = it; VoiceManager.putBool(VoiceManager.KEY_AUTO_SEND, it)
         }
         Toggle("Skip *actions*", "Don't read text between asterisks.", skipActions) {
@@ -163,7 +182,12 @@ private fun Toggle(title: String, subtitle: String, checked: Boolean, onChange: 
 }
 
 @Composable
-private fun Picker(label: String, current: String, options: List<Pair<String, String>>, onPick: (String) -> Unit) {
+private fun Picker(
+    label: String,
+    current: String,
+    options: List<Pair<String, String>>,
+    onPick: (String) -> Unit
+) {
     var open by remember { mutableStateOf(false) }
     Column {
         Text(label, style = MaterialTheme.typography.labelLarge)

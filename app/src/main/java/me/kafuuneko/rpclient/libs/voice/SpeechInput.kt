@@ -43,20 +43,30 @@ class SpeechInput(
                 override fun onRmsChanged(rmsdB: Float) {}
                 override fun onBufferReceived(buffer: ByteArray?) {}
                 override fun onEndOfSpeech() {}
-                override fun onError(error: Int) { onError(error); onEnd() }
+                override fun onError(error: Int) {
+                    onError(error); onEnd()
+                }
+
                 override fun onResults(results: Bundle?) {
-                    val t = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty()
+                    val t = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                        ?.firstOrNull().orEmpty()
                     onFinal(t); onEnd()
                 }
+
                 override fun onPartialResults(partialResults: Bundle?) {
-                    val t = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
+                    val t = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                        ?.firstOrNull()
                     if (!t.isNullOrBlank()) onPartial(t)
                 }
+
                 override fun onEvent(eventType: Int, params: Bundle?) {}
             })
             // 以自由输入模式开始监听并要求返回中间结果。
             val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                putExtra(
+                    RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+                    RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
+                )
                 putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
                 putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
             }
@@ -70,7 +80,9 @@ class SpeechInput(
         }
     }
 
-    fun stop() { recognizer?.stopListening() }
+    fun stop() {
+        recognizer?.stopListening()
+    }
 
     fun destroy() {
         recognizer?.destroy()

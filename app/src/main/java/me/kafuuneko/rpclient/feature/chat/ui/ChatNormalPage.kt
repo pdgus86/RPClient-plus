@@ -534,7 +534,14 @@ private fun CustomChatTopBar(
             }
             val voiceContext = LocalContext.current
             IconButton(
-                onClick = { voiceContext.startActivity(Intent(voiceContext, VoiceSettingsActivity::class.java)) },
+                onClick = {
+                    voiceContext.startActivity(
+                        Intent(
+                            voiceContext,
+                            VoiceSettingsActivity::class.java
+                        )
+                    )
+                },
                 modifier = Modifier.size(36.dp),
             ) {
                 Icon(
@@ -1150,7 +1157,16 @@ private fun ChatInputBar(
     val speechInput = remember {
         SpeechInput(
             context = micContext,
-            onPartial = { text -> currentEmit(ChatUiIntent.ChangeInputDraft(joinDraft(micBase, text))) },
+            onPartial = { text ->
+                currentEmit(
+                    ChatUiIntent.ChangeInputDraft(
+                        joinDraft(
+                            micBase,
+                            text
+                        )
+                    )
+                )
+            },
             onFinal = { text ->
                 if (text.isNotBlank()) {
                     currentEmit(ChatUiIntent.ChangeInputDraft(joinDraft(micBase, text)))
@@ -1171,7 +1187,11 @@ private fun ChatInputBar(
     DisposableEffect(Unit) { onDispose { speechInput.destroy() } }
     val startMic = {
         if (!speechInput.available) {
-            Toast.makeText(micContext, "No speech recognition service on this phone", Toast.LENGTH_LONG).show()
+            Toast.makeText(
+                micContext,
+                "No speech recognition service on this phone",
+                Toast.LENGTH_LONG
+            ).show()
         } else {
             micBase = currentDraft
             // 识别器启动失败时不进入监听状态，直接提示用户，避免页面崩溃。
@@ -1182,14 +1202,22 @@ private fun ChatInputBar(
             }
         }
     }
-    val micPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) startMic()
-        else Toast.makeText(micContext, "Microphone permission is needed for voice input", Toast.LENGTH_LONG).show()
-    }
+    val micPermission =
+        rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (granted) startMic()
+            else Toast.makeText(
+                micContext,
+                "Microphone permission is needed for voice input",
+                Toast.LENGTH_LONG
+            ).show()
+        }
     val onMicClick = {
         if (listening) {
             speechInput.stop()
-        } else if (ContextCompat.checkSelfPermission(micContext, Manifest.permission.RECORD_AUDIO) ==
+        } else if (ContextCompat.checkSelfPermission(
+                micContext,
+                Manifest.permission.RECORD_AUDIO
+            ) ==
             PackageManager.PERMISSION_GRANTED
         ) {
             startMic()
