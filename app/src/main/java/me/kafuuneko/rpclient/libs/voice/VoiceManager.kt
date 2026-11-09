@@ -49,12 +49,17 @@ object VoiceManager {
     private fun prefs() = appContext!!.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
     fun getString(key: String): String? = appContext?.let { prefs().getString(key, null) }
-    fun getFloat(key: String, def: Float): Float = appContext?.let { prefs().getFloat(key, def) } ?: def
-    fun getBool(key: String, def: Boolean): Boolean = appContext?.let { prefs().getBoolean(key, def) } ?: def
+    fun getFloat(key: String, def: Float): Float =
+        appContext?.let { prefs().getFloat(key, def) } ?: def
+
+    fun getBool(key: String, def: Boolean): Boolean =
+        appContext?.let { prefs().getBoolean(key, def) } ?: def
+
     fun putString(key: String, value: String?) = prefs().edit().putString(key, value).apply()
     fun putFloat(key: String, value: Float) {
         prefs().edit().putFloat(key, value).apply(); applyParams()
     }
+
     fun putBool(key: String, value: Boolean) = prefs().edit().putBoolean(key, value).apply()
 
     val autoRead: Boolean get() = getBool(KEY_AUTO_READ, false)
@@ -71,17 +76,29 @@ object VoiceManager {
                 _ttsReady.value = true
                 applyParams()
                 tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                    override fun onStart(utteranceId: String?) { _speaking.value = true }
-                    override fun onDone(utteranceId: String?) { finishOne() }
+                    override fun onStart(utteranceId: String?) {
+                        _speaking.value = true
+                    }
+
+                    override fun onDone(utteranceId: String?) {
+                        finishOne()
+                    }
+
                     @Deprecated("Deprecated in Java")
-                    override fun onError(utteranceId: String?) { finishOne() }
-                    override fun onStop(utteranceId: String?, interrupted: Boolean) { finishOne() }
+                    override fun onError(utteranceId: String?) {
+                        finishOne()
+                    }
+
+                    override fun onStop(utteranceId: String?, interrupted: Boolean) {
+                        finishOne()
+                    }
                 })
                 val queued = synchronized(pending) { pending.toList().also { pending.clear() } }
                 queued.forEach { speakChunk(it) }
             }
         }
-        tts = if (engine != null) TextToSpeech(ctx, listener, engine) else TextToSpeech(ctx, listener)
+        tts =
+            if (engine != null) TextToSpeech(ctx, listener, engine) else TextToSpeech(ctx, listener)
     }
 
     private fun finishOne() {
@@ -111,7 +128,9 @@ object VoiceManager {
 
     fun voices(): List<Voice> = try {
         tts?.voices?.sortedWith(compareBy({ it.locale.toLanguageTag() }, { it.name })).orEmpty()
-    } catch (_: Exception) { emptyList() }
+    } catch (_: Exception) {
+        emptyList()
+    }
 
     private fun applyParams() {
         val t = tts ?: return
@@ -196,7 +215,9 @@ object VoiceManager {
         if (safeLimit <= streamSpokenUpTo) return
         val region = text.substring(streamSpokenUpTo, safeLimit)
         var lastEnd = -1
-        sentenceEnd.findAll(region).forEach { m -> if (m.range.last + 1 < region.length || m.value.isNotEmpty()) lastEnd = m.range.last + 1 }
+        sentenceEnd.findAll(region).forEach { m ->
+            if (m.range.last + 1 < region.length || m.value.isNotEmpty()) lastEnd = m.range.last + 1
+        }
         if (lastEnd <= 0) return
         // Require a little content after the boundary unless it's a newline, to avoid "Mr." style splits mid-stream.
         val piece = region.substring(0, lastEnd)
@@ -207,7 +228,8 @@ object VoiceManager {
 
     fun streamEnd(key: Any, rawContent: String) {
         if (streamKey !== key) return
-        val rest = if (streamSpokenUpTo < rawContent.length) rawContent.substring(streamSpokenUpTo) else ""
+        val rest =
+            if (streamSpokenUpTo < rawContent.length) rawContent.substring(streamSpokenUpTo) else ""
         streamKey = null
         streamSpokenUpTo = 0
         val c = clean(rest)
