@@ -44,7 +44,8 @@ class SpeechInput(
                 override fun onBufferReceived(buffer: ByteArray?) {}
                 override fun onEndOfSpeech() {}
                 override fun onError(error: Int) {
-                    onError(error); onEnd()
+                    // 显式调用构造参数回调；直接写 onError(error) 会解析为本方法自身，导致无限递归崩溃。
+                    this@SpeechInput.onError(error); onEnd()
                 }
 
                 override fun onResults(results: Bundle?) {

@@ -1370,6 +1370,11 @@ private fun ChatInputBar(
                     shadowElevation = 2.dp,
                     onClick = {
                         hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        // 发送时结束语音听写，避免迟到的识别结果回填已清空的草稿或重复发送。
+                        if (listening) {
+                            speechInput.destroy()
+                            listening = false
+                        }
                         if (isGenerating) ChatUiIntent.StopGeneration.emit()
                         else ChatUiIntent.SendMessage.emit()
                     },
