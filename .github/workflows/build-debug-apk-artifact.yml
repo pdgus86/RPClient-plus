@@ -2,7 +2,7 @@ name: Build Debug APK (artifact)
 
 on:
   push:
-    branches: [apk-build]
+    branches: [apk-build, voice]
   pull_request:
   workflow_dispatch:
 
