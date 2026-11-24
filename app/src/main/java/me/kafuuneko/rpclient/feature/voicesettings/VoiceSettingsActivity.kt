@@ -149,7 +149,7 @@ private fun VoiceSettingsScreen(onBack: () -> Unit, openSystemTts: () -> Unit) {
         }
         Toggle(
             "Send when I stop talking",
-            "After the mic hears a pause, the message sends by itself.",
+            "After the mic hears a pause, the message sends by itself. The mic does not reopen on its own.",
             autoSend
         ) {
             autoSend = it; VoiceManager.putBool(VoiceManager.KEY_AUTO_SEND, it)
@@ -160,7 +160,7 @@ private fun VoiceSettingsScreen(onBack: () -> Unit, openSystemTts: () -> Unit) {
 
         OutlinedButton(onClick = openSystemTts) { Text("Open Android speech settings") }
         Text(
-            "Tip: tap the speaker on any reply to hear it. Tap anywhere in the chat list, or start the mic, to stop speaking.",
+            "Tip: tap the speaker on any reply to hear it, and tap it again (or start the mic) to stop speaking.",
             style = MaterialTheme.typography.bodySmall,
         )
         Spacer(Modifier.padding(8.dp))
