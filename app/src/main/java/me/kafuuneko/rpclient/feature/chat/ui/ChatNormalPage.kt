@@ -64,6 +64,7 @@ import androidx.compose.ui.platform.LocalContext
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.speech.RecognizerIntent
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -1154,52 +1155,51 @@ private fun ChatInputBar(
     val currentDraft by rememberUpdatedState(draft)
     val currentEmit by rememberUpdatedState(emit)
     var micBase by remember { mutableStateOf("") }
+    // 把识别出的文字写入草稿；开启“说完即发送”时随即发送，回复由 VoiceManager 自动朗读（不自动再次开麦）。
+    val deliverSpeech: (String) -> Unit = { text ->
+        if (text.isNotBlank()) {
+            currentEmit(ChatUiIntent.ChangeInputDraft(joinDraft(micBase, text)))
+            if (VoiceManager.autoSend) currentEmit(ChatUiIntent.SendMessage)
+        }
+    }
+    val currentDeliverSpeech by rememberUpdatedState(deliverSpeech)
+    // 识别服务不可用时退回系统语音输入界面（谷歌/三星自带的弹窗），保证仍能语音输入。
+    val systemSpeechUi =
+        rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            val text = result.data
+                ?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+                ?.firstOrNull()
+                .orEmpty()
+            currentDeliverSpeech(text)
+        }
     val speechInput = remember {
         SpeechInput(
             context = micContext,
             onPartial = { text ->
-                currentEmit(
-                    ChatUiIntent.ChangeInputDraft(
-                        joinDraft(
-                            micBase,
-                            text
-                        )
-                    )
-                )
+                currentEmit(ChatUiIntent.ChangeInputDraft(joinDraft(micBase, text)))
             },
-            onFinal = { text ->
-                if (text.isNotBlank()) {
-                    currentEmit(ChatUiIntent.ChangeInputDraft(joinDraft(micBase, text)))
-                    if (VoiceManager.autoSend) currentEmit(ChatUiIntent.SendMessage)
-                }
-            },
+            onFinal = { text -> currentDeliverSpeech(text) },
             onEnd = { listening = false },
-            onError = { code ->
-                if (code != android.speech.SpeechRecognizer.ERROR_NO_MATCH &&
-                    code != android.speech.SpeechRecognizer.ERROR_SPEECH_TIMEOUT &&
-                    code != android.speech.SpeechRecognizer.ERROR_CLIENT
-                ) {
-                    Toast.makeText(micContext, "Mic error ($code)", Toast.LENGTH_SHORT).show()
-                }
+            onError = { error ->
+                // 部分结果已写入草稿时，失败后恢复说话前的草稿，避免半句残留。
+                currentEmit(ChatUiIntent.ChangeInputDraft(micBase))
+                Toast.makeText(micContext, error.message, Toast.LENGTH_LONG).show()
+                if (error.fallbackToSystemUi) launchSystemSpeechUi(micContext, systemSpeechUi)
             },
         )
     }
     DisposableEffect(Unit) { onDispose { speechInput.destroy() } }
     val startMic = {
+        micBase = currentDraft
         if (!speechInput.available) {
-            Toast.makeText(
-                micContext,
-                "No speech recognition service on this phone",
-                Toast.LENGTH_LONG
-            ).show()
+            // 没有可绑定的识别服务：直接使用系统语音输入界面。
+            launchSystemSpeechUi(micContext, systemSpeechUi)
+        } else if (speechInput.start()) {
+            listening = true
         } else {
-            micBase = currentDraft
-            // 识别器启动失败时不进入监听状态，直接提示用户，避免页面崩溃。
-            if (speechInput.start()) {
-                listening = true
-            } else {
-                Toast.makeText(micContext, "Mic failed to start", Toast.LENGTH_LONG).show()
-            }
+            // 识别器启动失败时不进入监听状态，改用系统语音输入界面，避免页面崩溃或静默失败。
+            Toast.makeText(micContext, "Mic didn't start. Opening the system voice input…", Toast.LENGTH_LONG).show()
+            launchSystemSpeechUi(micContext, systemSpeechUi)
         }
     }
     val micPermission =
@@ -1207,7 +1207,7 @@ private fun ChatInputBar(
             if (granted) startMic()
             else Toast.makeText(
                 micContext,
-                "Microphone permission is needed for voice input",
+                "Microphone permission is needed for voice input. Turn it on in Settings > Apps > RPClient > Permissions.",
                 Toast.LENGTH_LONG
             ).show()
         }
@@ -1555,6 +1555,28 @@ private fun PreviewImageMessages(examples: List<Pair<Int, Boolean>>) {
                 )
             }
         }
+    }
+}
+
+/** 打开系统语音输入界面；设备上连界面都没有时提示用户。 */
+private fun launchSystemSpeechUi(
+    context: android.content.Context,
+    launcher: androidx.activity.result.ActivityResultLauncher<Intent>,
+) {
+    VoiceManager.stop()
+    val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+        putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+        putExtra(RecognizerIntent.EXTRA_LANGUAGE, java.util.Locale.getDefault().toLanguageTag())
+        putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak")
+    }
+    try {
+        launcher.launch(intent)
+    } catch (_: android.content.ActivityNotFoundException) {
+        Toast.makeText(
+            context,
+            "No speech recognition on this phone. Install or enable Google speech services.",
+            Toast.LENGTH_LONG
+        ).show()
     }
 }
 

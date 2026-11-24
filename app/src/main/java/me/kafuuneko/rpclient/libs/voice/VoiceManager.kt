@@ -1,20 +1,33 @@
 package me.kafuuneko.rpclient.libs.voice
 
 import android.content.Context
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.speech.tts.Voice
+import android.util.Log
+import android.widget.Toast
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * App-wide voice output using the Android system TextToSpeech engine.
  * Settings are stored in SharedPreferences. Supports sentence-by-sentence
  * speaking of streaming replies.
+ *
+ * Third-party engines (Pocket TTS, Supertonic, Marmalade…) use their own configured
+ * voice, so this class never calls setLanguage() and never treats a language status
+ * code as fatal.
  */
 object VoiceManager {
+    private const val TAG = "VoiceManager"
     private const val PREFS = "voice_settings"
     const val KEY_ENGINE = "engine"
     const val KEY_VOICE = "voice"
@@ -24,18 +37,28 @@ object VoiceManager {
     const val KEY_AUTO_SEND = "auto_send"
     const val KEY_SKIP_ACTIONS = "skip_actions"
 
+    private val main = Handler(Looper.getMainLooper())
     private var appContext: Context? = null
     private var tts: TextToSpeech? = null
+
+    @Volatile
     private var ready = false
+    private var initFailed = false
+    private var triedDefaultFallback = false
+    private var rebindAttempted = false
     private val pending = ArrayList<String>()
     private val utteranceCounter = AtomicInteger(0)
-    private val outstanding = AtomicInteger(0)
+
+    // 记录仍在队列或正在播放的 utterance，避免 stop() 后迟到的 onStop 回调把新一轮朗读状态误置为结束。
+    private val activeUtterances: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
     private val _speaking = MutableStateFlow(false)
     val speaking: StateFlow<Boolean> = _speaking
 
     private val _ttsReady = MutableStateFlow(false)
     val ttsReady: StateFlow<Boolean> = _ttsReady
+
+    private var focusRequest: AudioFocusRequest? = null
 
     // Streaming state
     private var streamKey: Any? = null
@@ -62,50 +85,123 @@ object VoiceManager {
 
     fun putBool(key: String, value: Boolean) = prefs().edit().putBoolean(key, value).apply()
 
-    val autoRead: Boolean get() = getBool(KEY_AUTO_READ, false)
-    val autoSend: Boolean get() = getBool(KEY_AUTO_SEND, false)
+    // 默认开启：按下麦克风说完即发送，并自动朗读回复（不做免提循环监听）。
+    val autoRead: Boolean get() = getBool(KEY_AUTO_READ, true)
+    val autoSend: Boolean get() = getBool(KEY_AUTO_SEND, true)
 
-    private fun createTts() {
+    private fun createTts(forceDefault: Boolean = false) {
         val ctx = appContext ?: return
         ready = false
+        initFailed = false
         _ttsReady.value = false
-        val engine = getString(KEY_ENGINE)?.takeIf { it.isNotBlank() }
-        val listener = TextToSpeech.OnInitListener { status ->
-            if (status == TextToSpeech.SUCCESS) {
-                ready = true
-                _ttsReady.value = true
-                applyParams()
-                tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                    override fun onStart(utteranceId: String?) {
-                        _speaking.value = true
-                    }
-
-                    override fun onDone(utteranceId: String?) {
-                        finishOne()
-                    }
-
-                    @Deprecated("Deprecated in Java")
-                    override fun onError(utteranceId: String?) {
-                        finishOne()
-                    }
-
-                    override fun onStop(utteranceId: String?, interrupted: Boolean) {
-                        finishOne()
-                    }
-                })
-                val queued = synchronized(pending) { pending.toList().also { pending.clear() } }
-                queued.forEach { speakChunk(it) }
-            }
-        }
-        tts =
+        val engine = if (forceDefault) null else getString(KEY_ENGINE)?.takeIf { it.isNotBlank() }
+        val listener = TextToSpeech.OnInitListener { status -> onTtsInit(status, engine) }
+        tts = try {
             if (engine != null) TextToSpeech(ctx, listener, engine) else TextToSpeech(ctx, listener)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to create TextToSpeech", e)
+            null
+        }
+        if (tts == null) onTtsInit(TextToSpeech.ERROR, engine)
     }
 
-    private fun finishOne() {
-        if (outstanding.decrementAndGet() <= 0) {
-            outstanding.set(0)
-            _speaking.value = false
+    /**
+     * 处理引擎初始化结果。
+     *
+     * 第三方引擎可能因电池优化被系统杀掉或绑定失败；自选引擎失败时退回系统默认引擎再试一次，
+     * 仍失败则清空待读队列并提示用户，避免静默无声。
+     */
+    private fun onTtsInit(status: Int, engine: String?) {
+        // 初始化成功：应用参数、挂监听并播放初始化期间积压的文本。
+        if (status == TextToSpeech.SUCCESS) {
+            ready = true
+            triedDefaultFallback = false
+            _ttsReady.value = true
+            tts?.setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build()
+            )
+            applyParams()
+            tts?.setOnUtteranceProgressListener(progressListener)
+            val queued = synchronized(pending) { pending.toList().also { pending.clear() } }
+            queued.forEach { speakChunk(it) }
+            return
         }
+        Log.w(TAG, "TTS init failed (status=$status, engine=$engine)")
+        // 自选引擎失败：退回系统默认引擎。
+        if (engine != null && !triedDefaultFallback) {
+            triedDefaultFallback = true
+            runCatching { tts?.shutdown() }
+            tts = null
+            showToast("Speech engine $engine didn't start. Using the system default engine.")
+            main.post { createTts(forceDefault = true) }
+            return
+        }
+        // 默认引擎也失败：放弃积压内容并提示。
+        initFailed = true
+        synchronized(pending) { pending.clear() }
+        setSpeaking(false)
+        showToast("Text-to-speech couldn't start. Check Android's text-to-speech settings.")
+    }
+
+    private val progressListener = object : UtteranceProgressListener() {
+        override fun onStart(utteranceId: String?) {
+            if (utteranceId != null && utteranceId in activeUtterances) setSpeaking(true)
+        }
+
+        override fun onDone(utteranceId: String?) {
+            finishOne(utteranceId)
+        }
+
+        @Deprecated("Deprecated in Java")
+        override fun onError(utteranceId: String?) {
+            finishOne(utteranceId)
+        }
+
+        override fun onError(utteranceId: String?, errorCode: Int) {
+            Log.w(TAG, "Utterance $utteranceId failed: $errorCode")
+            finishOne(utteranceId)
+        }
+
+        override fun onStop(utteranceId: String?, interrupted: Boolean) {
+            finishOne(utteranceId)
+        }
+    }
+
+    private fun finishOne(utteranceId: String?) {
+        if (utteranceId != null) activeUtterances.remove(utteranceId)
+        if (activeUtterances.isEmpty()) setSpeaking(false)
+    }
+
+    /** 朗读状态变化时同步请求/释放音频焦点，让音乐等其他声音在朗读期间压低音量。 */
+    private fun setSpeaking(value: Boolean) {
+        if (_speaking.value == value) return
+        _speaking.value = value
+        val am = appContext?.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+        runCatching {
+            if (value) {
+                val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+                    .setAudioAttributes(
+                        AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_MEDIA)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                            .build()
+                    )
+                    .build()
+                focusRequest = request
+                am.requestAudioFocus(request)
+            } else {
+                focusRequest?.let { am.abandonAudioFocusRequest(it) }
+                focusRequest = null
+            }
+        }
+    }
+
+    private fun showToast(message: String) {
+        val ctx = appContext ?: return
+        main.post { Toast.makeText(ctx, message, Toast.LENGTH_LONG).show() }
     }
 
     /** Re-create the engine after the user picks a different one. */
@@ -113,8 +209,9 @@ object VoiceManager {
         putString(KEY_ENGINE, engine)
         putString(KEY_VOICE, null)
         stop()
-        tts?.shutdown()
+        runCatching { tts?.shutdown() }
         tts = null
+        triedDefaultFallback = false
         createTts()
     }
 
@@ -135,8 +232,8 @@ object VoiceManager {
     private fun applyParams() {
         val t = tts ?: return
         if (!ready) return
-        t.setSpeechRate(getFloat(KEY_RATE, 1.0f))
-        t.setPitch(getFloat(KEY_PITCH, 1.0f))
+        runCatching { t.setSpeechRate(getFloat(KEY_RATE, 1.0f)) }
+        runCatching { t.setPitch(getFloat(KEY_PITCH, 1.0f)) }
         val voiceName = getString(KEY_VOICE)
         if (!voiceName.isNullOrBlank()) {
             voices().firstOrNull { it.name == voiceName }?.let { runCatching { t.voice = it } }
@@ -149,33 +246,56 @@ object VoiceManager {
         s = s.replace(Regex("(?s)<think>.*?(</think>|$)"), " ")
         s = s.replace(Regex("(?s)<thinking>.*?(</thinking>|$)"), " ")
         if (getBool(KEY_SKIP_ACTIONS, false)) s = s.replace(Regex("\\*[^*\\n]+\\*"), " ")
-        s = s.replace(Regex("!\\[[^]]*]\\([^)]*\\)"), " ")
-        s = s.replace(Regex("\\[([^]]*)]\\([^)]*\\)"), "$1")
-        s = s.replace(Regex("[*_#`>~]+"), "")
-        s = s.replace(Regex("<[^>]+>"), " ")
-        return s.replace(Regex("[ \\t]+"), " ").trim()
+        return cleanMarkdown(s)
     }
 
+    /**
+     * 将一段文本送入引擎队列。
+     *
+     * 引擎未就绪时先排队；第三方引擎进程被系统回收后 speak() 会返回 ERROR，
+     * 此时重建一次引擎并把文本放回队列，避免之后所有朗读都静默失败。
+     */
     private fun speakChunk(text: String) {
         val t = tts
+        // 引擎未就绪：排队等待 onInit。
         if (t == null || !ready) {
             synchronized(pending) { pending.add(text) }
+            // 上次初始化彻底失败时，把这次朗读请求当作重试。
+            if (initFailed) {
+                triedDefaultFallback = false
+                runCatching { t?.shutdown() }
+                tts = null
+                createTts()
+            }
             return
         }
-        val chunks = splitLong(text)
-        for (c in chunks) {
-            outstanding.incrementAndGet()
-            _speaking.value = true
+        // 引擎就绪：逐段入队，失败时重建引擎重试。
+        val chunks = splitForTts(text, (TextToSpeech.getMaxSpeechInputLength() - 10).coerceAtLeast(200))
+        for ((index, c) in chunks.withIndex()) {
             val id = "rp_" + utteranceCounter.incrementAndGet()
-            val r = t.speak(c, TextToSpeech.QUEUE_ADD, Bundle(), id)
-            if (r != TextToSpeech.SUCCESS) finishOne()
+            activeUtterances.add(id)
+            setSpeaking(true)
+            val params = Bundle().apply { putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, id) }
+            val r = runCatching { t.speak(c, TextToSpeech.QUEUE_ADD, params, id) }
+                .getOrDefault(TextToSpeech.ERROR)
+            if (r == TextToSpeech.SUCCESS) {
+                rebindAttempted = false
+                continue
+            }
+            finishOne(id)
+            if (rebindAttempted) {
+                showToast("Text-to-speech engine isn't responding.")
+                return
+            }
+            rebindAttempted = true
+            Log.w(TAG, "speak() returned $r, rebinding the TTS engine")
+            runCatching { t.shutdown() }
+            tts = null
+            ready = false
+            synchronized(pending) { pending.addAll(chunks.drop(index)) }
+            createTts()
+            return
         }
-    }
-
-    private fun splitLong(text: String): List<String> {
-        val max = (TextToSpeech.getMaxSpeechInputLength() - 10).coerceAtLeast(200)
-        if (text.length <= max) return listOf(text)
-        return text.chunked(max)
     }
 
     /** Speak a full message now, replacing anything currently being spoken. */
@@ -189,14 +309,12 @@ object VoiceManager {
         streamKey = null
         streamSpokenUpTo = 0
         synchronized(pending) { pending.clear() }
-        tts?.stop()
-        outstanding.set(0)
-        _speaking.value = false
+        activeUtterances.clear()
+        runCatching { tts?.stop() }
+        setSpeaking(false)
     }
 
     // ---- Streaming: speak finished sentences as they arrive ----
-
-    private val sentenceEnd = Regex("[.!?。！？…]+[\"'”’)\\]]*(\\s+|$)|\\n+")
 
     fun streamStart(key: Any) {
         if (!autoRead) return
@@ -214,12 +332,8 @@ object VoiceManager {
         val safeLimit = if (lastOpen > lastClose) lastOpen else text.length
         if (safeLimit <= streamSpokenUpTo) return
         val region = text.substring(streamSpokenUpTo, safeLimit)
-        var lastEnd = -1
-        sentenceEnd.findAll(region).forEach { m ->
-            if (m.range.last + 1 < region.length || m.value.isNotEmpty()) lastEnd = m.range.last + 1
-        }
+        val lastEnd = lastCompleteSentenceEnd(region)
         if (lastEnd <= 0) return
-        // Require a little content after the boundary unless it's a newline, to avoid "Mr." style splits mid-stream.
         val piece = region.substring(0, lastEnd)
         streamSpokenUpTo += lastEnd
         val c = clean(piece)
